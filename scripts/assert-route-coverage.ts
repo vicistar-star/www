@@ -14,40 +14,32 @@
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import {
-  STATIC_ROUTES,
-  DYNAMIC_ROUTE_FAMILIES,
-  SPECIAL_ROUTES,
-} from '../src/routes/inventory.js';
+import { STATIC_ROUTES, DYNAMIC_ROUTE_FAMILIES, SPECIAL_ROUTES } from '../src/routes/inventory.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
-const appPath = join(rootDir, 'src', 'App.tsx');
+const APP_PATH = join(rootDir, 'src', 'App.tsx');
 
 /**
  * Extract all `path="..."` values from App.tsx.
- * We only look at literal string paths — locale-prefixed variants built from
- * template literals (e.g. `/${locale}/stellar`) are omitted because the
- * localized flag on each inventory entry already captures them.
+ * Locale-prefixed variants built from template literals (e.g. `/${locale}/stellar`) are
+ * omitted — they are covered by the `localized` flag on the base path entry.
  */
 function extractAppPaths(source: string): Set<string> {
   const paths = new Set<string>();
 
-  // Match path="<literal>" attributes (single or double quotes)
   const literalPattern = /\bpath=["']([^"'*]+?)["']/g;
   let m: RegExpExecArray | null;
   while ((m = literalPattern.exec(source)) !== null) {
     paths.add(m[1]);
   }
 
-  // Capture the catch-all wildcard separately
   if (/\bpath=["']\*["']/.test(source)) {
     paths.add('*');
   }
 
-  // Remove locale-prefixed duplicates (/es/..., /pt/...) — they are covered by
-  // the `localized` flag on the base path entry.
-  for (const p of Array.from(paths)) {
+  // Remove locale-prefixed duplicates (/es/..., /pt/...) covered by the `localized` flag.
+  for (const p of paths) {
     if (/^\/(es|pt)(\/|$)/.test(p)) {
       paths.delete(p);
     }
@@ -57,10 +49,9 @@ function extractAppPaths(source: string): Set<string> {
 }
 
 export function assertAllAppRoutesHavePolicy(): void {
-  const source = readFileSync(appPath, 'utf8');
+  const source = readFileSync(APP_PATH, 'utf8');
   const appPaths = extractAppPaths(source);
 
-  // Build a set of all paths/patterns declared in the inventory
   const inventoryPatterns = new Set<string>([
     ...STATIC_ROUTES.map((r) => r.path),
     ...DYNAMIC_ROUTE_FAMILIES.map((f) => f.pattern),
@@ -68,14 +59,14 @@ export function assertAllAppRoutesHavePolicy(): void {
   ]);
 
   const missing: string[] = [];
-  for (const appPath of appPaths) {
-    if (!inventoryPatterns.has(appPath)) {
-      missing.push(appPath);
+  for (const p of appPaths) {
+    if (!inventoryPatterns.has(p)) {
+      missing.push(p);
     }
   }
 
   if (missing.length > 0) {
-    const list = missing.map((p) => `  • ${p}`).join('\n');
+    const list = missing.map((p) => `  - ${p}`).join('\n');
     throw new Error(
       `Route inventory is out of date.\n` +
         `The following routes exist in App.tsx but have no policy in src/routes/inventory.ts:\n` +

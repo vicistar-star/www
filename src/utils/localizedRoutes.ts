@@ -6,7 +6,7 @@
  * This module re-exports a Set view of those paths for use in the router
  * helpers (useLocalePath.ts) and in scripts/og.ts.
  */
-import { localizedBasePaths } from './routes/inventory';
+import { localizedBasePaths } from '../routes/inventory';
 
 /**
  * Routes that exist under the locale prefixes (/es/*, /pt/*).
