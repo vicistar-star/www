@@ -37,6 +37,9 @@ for (const { path, name } of pages.map((p) => ({ path: p.path, name: p.label }))
   test(`has zero critical/serious axe violations on ${name}`, async ({ page }) => {
     await page.goto(path);
     await page.waitForLoadState('domcontentloaded');
+    // Wait for the page <title> to be populated by Helmet before running axe,
+    // so document-title violations are not triggered by lazy-load timing.
+    await page.waitForFunction(() => document.title.length > 0, { timeout: 5_000 }).catch(() => {});
 
     const results = await new AxeBuilder({ page }).analyze();
     const critical = results.violations.filter(
