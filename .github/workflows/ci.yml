@@ -139,13 +139,22 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
+      - name: Generate Lighthouse URL list from route inventory
+        run: |
+          node -e "
+            const snap = JSON.parse(require('fs').readFileSync('scripts/routes-snapshot.json','utf8'));
+            const base = 'http://localhost:4173';
+            const urls = snap.lighthouseRoutes.map(r => base + r.path).join('\n');
+            require('fs').writeFileSync('.github/lighthouse-urls.txt', urls + '\n');
+            console.log('Lighthouse URLs:', urls);
+          "
+
       - name: Run Lighthouse on Mobile
         id: lighthouse_mobile
         continue-on-error: true
         uses: treosh/lighthouse-ci-action@v12
         with:
-          urls: |
-            http://localhost:4173/
+          urlsFile: './.github/lighthouse-urls.txt'
           startServerCommand: pnpm preview
           uploadArtifacts: true
           temporaryPublicStorage: true
@@ -159,8 +168,7 @@ jobs:
         continue-on-error: true
         uses: treosh/lighthouse-ci-action@v12
         with:
-          urls: |
-            http://localhost:4173/
+          urlsFile: './.github/lighthouse-urls.txt'
           startServerCommand: pnpm preview
           uploadArtifacts: true
           temporaryPublicStorage: true
@@ -185,21 +193,10 @@ jobs:
             const mobileManifest = JSON.parse(fs.readFileSync('.lighthouseci-mobile/manifest.json', 'utf8'));
             const desktopManifest = JSON.parse(fs.readFileSync('.lighthouseci-desktop/manifest.json', 'utf8'));
 
-            const mobile = mobileManifest[0];
-            const desktop = desktopManifest[0];
+            const snap = JSON.parse(fs.readFileSync('scripts/routes-snapshot.json', 'utf8'));
+            const base = 'http://localhost:4173';
 
             const formatScore = (val) => Math.round(val * 100);
-
-            const mobilePerf = formatScore(mobile.summary.performance);
-            const mobileA11y = formatScore(mobile.summary.accessibility);
-            const mobileBp = formatScore(mobile.summary['best-practices']);
-            const mobileSeo = formatScore(mobile.summary.seo);
-
-            const desktopPerf = formatScore(desktop.summary.performance);
-            const desktopA11y = formatScore(desktop.summary.accessibility);
-            const desktopBp = formatScore(desktop.summary['best-practices']);
-            const desktopSeo = formatScore(desktop.summary.seo);
-
             const getScoreEmoji = (score) => {
               if (score >= 95) return '🟢';
               if (score >= 90) return '🟡';
@@ -208,22 +205,35 @@ jobs:
 
             const mobileLinks = JSON.parse(process.env.MOBILE_LINKS || '{}');
             const desktopLinks = JSON.parse(process.env.DESKTOP_LINKS || '{}');
-            const mobileReport = mobileLinks['http://localhost:4173/'] || '';
-            const desktopReport = desktopLinks['http://localhost:4173/'] || '';
+
+            // Build one row per audited route
+            const rows = snap.lighthouseRoutes.map(r => {
+              const url = base + r.path;
+              const mob = mobileManifest.find(m => m.url === url);
+              const desk = desktopManifest.find(d => d.url === url);
+              if (!mob || !desk) return null;
+              const mp = formatScore(mob.summary.performance);
+              const ma = formatScore(mob.summary.accessibility);
+              const dp = formatScore(desk.summary.performance);
+              const da = formatScore(desk.summary.accessibility);
+              return `| \`${r.path}\` | ${getScoreEmoji(mp)} **${mp}** / ${getScoreEmoji(ma)} **${ma}** | ${getScoreEmoji(dp)} **${dp}** / ${getScoreEmoji(da)} **${da}** |`;
+            }).filter(Boolean).join('\n');
 
             const reportLinks = [];
-            if (mobileReport) reportLinks.push(`[Mobile Report](${mobileReport})`);
-            if (desktopReport) reportLinks.push(`[Desktop Report](${desktopReport})`);
-            const reportText = reportLinks.length > 0 ? `📄 **Reports:** ${reportLinks.join(' | ')}` : '';
+            for (const r of snap.lighthouseRoutes) {
+              const url = base + r.path;
+              if (mobileLinks[url]) reportLinks.push(`[Mobile ${r.path}](${mobileLinks[url]})`);
+              if (desktopLinks[url]) reportLinks.push(`[Desktop ${r.path}](${desktopLinks[url]})`);
+            }
+            const reportText = reportLinks.length > 0
+              ? `📄 **Reports:** ${reportLinks.join(' | ')}`
+              : '';
 
             const body = `### ⚡ Lighthouse Audit Results
 
-            | Category | Mobile | Desktop | Target |
-            | --- | --- | --- | --- |
-            | **Performance** | ${getScoreEmoji(mobilePerf)} **${mobilePerf}** | ${getScoreEmoji(desktopPerf)} **${desktopPerf}** | >= 95 |
-            | **Accessibility** | ${getScoreEmoji(mobileA11y)} **${mobileA11y}** | ${getScoreEmoji(desktopA11y)} **${desktopA11y}** | >= 95 |
-            | **Best Practices** | ${getScoreEmoji(mobileBp)} **${mobileBp}** | ${getScoreEmoji(desktopBp)} **${desktopBp}** | >= 95 |
-            | **SEO** | ${getScoreEmoji(mobileSeo)} **${mobileSeo}** | ${getScoreEmoji(desktopSeo)} **${desktopSeo}** | >= 95 |
+            | Route | Mobile Perf / A11y | Desktop Perf / A11y |
+            | --- | --- | --- |
+            ${rows}
 
             ${reportText}
 

@@ -8,6 +8,7 @@ import {
   PAGE_SECURITY_HEADERS,
   SUBSCRIBE_API_SECURITY_HEADERS,
 } from '../../src/utils/security-headers';
+import { smokeRoutes } from '../../src/routes/inventory';
 
 /**
  * Preview smoke tests for the serverless routes.
@@ -436,7 +437,7 @@ describe('serverless failure responses', () => {
   });
 
   it('still serves the built site', async () => {
-    for (const path of ['/', '/stellar']) {
+    for (const { path } of smokeRoutes()) {
       const response = await get(`${preview.baseUrl}${path}`);
       expect(response.status).toBe(200);
       expect(response.headers.get('content-type')).toContain('text/html');
