@@ -139,13 +139,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
+      - name: Start preview server
+        run: pnpm preview &
+      - name: Wait for preview server
+        run: npx --yes wait-on http://localhost:4173 --timeout 30000
+
       - name: Run Lighthouse on Mobile
         id: lighthouse_mobile
         uses: treosh/lighthouse-ci-action@v12
         with:
           urls: |
             http://localhost:4173/
-          startServerCommand: pnpm preview
           uploadArtifacts: true
           temporaryPublicStorage: true
           configPath: './.github/lhci-mobile.json'
@@ -160,7 +164,6 @@ jobs:
         with:
           urls: |
             http://localhost:4173/
-          startServerCommand: pnpm preview
           uploadArtifacts: true
           temporaryPublicStorage: true
           configPath: './.github/lhci-desktop.json'
