@@ -140,9 +140,9 @@ jobs:
       - run: pnpm build
 
       - name: Start preview server
-        run: pnpm preview &
+        run: pnpm preview --host &
       - name: Wait for preview server
-        run: npx --yes wait-on http://localhost:4173 --timeout 30000
+        run: npx --yes wait-on tcp:localhost:4173 --timeout 30000
 
       - name: Run Lighthouse on Mobile
         id: lighthouse_mobile
