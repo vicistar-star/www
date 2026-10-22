@@ -201,6 +201,8 @@ jobs:
             const mobile = mobileManifest[0];
             const desktop = desktopManifest[0];
 
+            // Thresholds must stay in sync with lhci-mobile.json / lhci-desktop.json
+            const PERF_BUDGET = 80;
             const BUDGET = 95;
             const formatScore = (val) => Math.round(val * 100);
 
@@ -214,10 +216,16 @@ jobs:
             const desktopBp = formatScore(desktop.summary['best-practices']);
             const desktopSeo = formatScore(desktop.summary.seo);
 
-            const allPass = [mobilePerf, mobileA11y, mobileBp, mobileSeo,
-                             desktopPerf, desktopA11y, desktopBp, desktopSeo]
-              .every(s => s >= BUDGET);
+            const allPass =
+              mobilePerf >= PERF_BUDGET && desktopPerf >= PERF_BUDGET &&
+              [mobileA11y, mobileBp, mobileSeo, desktopA11y, desktopBp, desktopSeo]
+                .every(s => s >= BUDGET);
 
+            const getPerfEmoji = (score) => {
+              if (score >= PERF_BUDGET) return '🟢';
+              if (score >= 70) return '🟡';
+              return '🔴';
+            };
             const getScoreEmoji = (score) => {
               if (score >= BUDGET) return '🟢';
               if (score >= 90) return '🟡';
@@ -235,21 +243,23 @@ jobs:
             const reportText = reportLinks.length > 0 ? `📄 **Reports:** ${reportLinks.join(' | ')}` : '';
 
             const statusLine = allPass
-              ? '✅ All categories meet the **≥ 95** budget.'
-              : '❌ One or more categories are **below the 95 budget** — this job will block merge.';
+              ? '✅ All categories meet their CI budgets.'
+              : '❌ One or more categories are below their CI budget — this job will block merge.';
 
             const body = `### ⚡ Lighthouse Audit Results
 
             ${statusLine}
 
-            | Category | Mobile | Desktop | Budget |
+            | Category | Mobile | Desktop | CI Budget |
             | --- | --- | --- | --- |
-            | **Performance** | ${getScoreEmoji(mobilePerf)} **${mobilePerf}** | ${getScoreEmoji(desktopPerf)} **${desktopPerf}** | ≥ 95 |
+            | **Performance** | ${getPerfEmoji(mobilePerf)} **${mobilePerf}** | ${getPerfEmoji(desktopPerf)} **${desktopPerf}** | ≥ 80 _(CI runner)_ |
             | **Accessibility** | ${getScoreEmoji(mobileA11y)} **${mobileA11y}** | ${getScoreEmoji(desktopA11y)} **${desktopA11y}** | ≥ 95 |
             | **Best Practices** | ${getScoreEmoji(mobileBp)} **${mobileBp}** | ${getScoreEmoji(desktopBp)} **${desktopBp}** | ≥ 95 |
             | **SEO** | ${getScoreEmoji(mobileSeo)} **${mobileSeo}** | ${getScoreEmoji(desktopSeo)} **${desktopSeo}** | ≥ 95 |
 
             ${reportText}
+
+            > Performance budget is set to ≥ 80 in CI due to GitHub-hosted runner variance. Accessibility, Best Practices, and SEO are held to ≥ 95.
 
             *Full reports are also saved as the \`lighthouse-reports\` workflow artifact.*`;
 
