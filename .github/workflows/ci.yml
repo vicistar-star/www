@@ -141,7 +141,6 @@ jobs:
 
       - name: Run Lighthouse on Mobile
         id: lighthouse_mobile
-        continue-on-error: true
         uses: treosh/lighthouse-ci-action@v12
         with:
           urls: |
@@ -149,14 +148,14 @@ jobs:
           startServerCommand: pnpm preview
           uploadArtifacts: true
           temporaryPublicStorage: true
+          configPath: './.github/lhci-mobile.json'
 
-      - name: Save Mobile Manifest
-        if: steps.lighthouse_mobile.outcome == 'success'
+      - name: Save Mobile Reports
+        if: always()
         run: cp -r .lighthouseci .lighthouseci-mobile
 
       - name: Run Lighthouse on Desktop
         id: lighthouse_desktop
-        continue-on-error: true
         uses: treosh/lighthouse-ci-action@v12
         with:
           urls: |
@@ -166,16 +165,27 @@ jobs:
           temporaryPublicStorage: true
           configPath: './.github/lhci-desktop.json'
 
-      - name: Save Desktop Manifest
-        if: steps.lighthouse_desktop.outcome == 'success'
+      - name: Save Desktop Reports
+        if: always()
         run: cp -r .lighthouseci .lighthouseci-desktop
+
+      - name: Upload Lighthouse Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-reports
+          path: |
+            .lighthouseci-mobile/
+            .lighthouseci-desktop/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Post Comment on PR
         uses: actions/github-script@v7
         if: >-
           github.event_name == 'pull_request' &&
-          steps.lighthouse_mobile.outcome == 'success' &&
-          steps.lighthouse_desktop.outcome == 'success'
+          (steps.lighthouse_mobile.outcome == 'success' || steps.lighthouse_mobile.outcome == 'failure') &&
+          (steps.lighthouse_desktop.outcome == 'success' || steps.lighthouse_desktop.outcome == 'failure')
         env:
           MOBILE_LINKS: ${{ steps.lighthouse_mobile.outputs.links }}
           DESKTOP_LINKS: ${{ steps.lighthouse_desktop.outputs.links }}
@@ -188,6 +198,7 @@ jobs:
             const mobile = mobileManifest[0];
             const desktop = desktopManifest[0];
 
+            const BUDGET = 95;
             const formatScore = (val) => Math.round(val * 100);
 
             const mobilePerf = formatScore(mobile.summary.performance);
@@ -200,8 +211,12 @@ jobs:
             const desktopBp = formatScore(desktop.summary['best-practices']);
             const desktopSeo = formatScore(desktop.summary.seo);
 
+            const allPass = [mobilePerf, mobileA11y, mobileBp, mobileSeo,
+                             desktopPerf, desktopA11y, desktopBp, desktopSeo]
+              .every(s => s >= BUDGET);
+
             const getScoreEmoji = (score) => {
-              if (score >= 95) return '🟢';
+              if (score >= BUDGET) return '🟢';
               if (score >= 90) return '🟡';
               return '🔴';
             };
@@ -216,18 +231,24 @@ jobs:
             if (desktopReport) reportLinks.push(`[Desktop Report](${desktopReport})`);
             const reportText = reportLinks.length > 0 ? `📄 **Reports:** ${reportLinks.join(' | ')}` : '';
 
+            const statusLine = allPass
+              ? '✅ All categories meet the **≥ 95** budget.'
+              : '❌ One or more categories are **below the 95 budget** — this job will block merge.';
+
             const body = `### ⚡ Lighthouse Audit Results
 
-            | Category | Mobile | Desktop | Target |
+            ${statusLine}
+
+            | Category | Mobile | Desktop | Budget |
             | --- | --- | --- | --- |
-            | **Performance** | ${getScoreEmoji(mobilePerf)} **${mobilePerf}** | ${getScoreEmoji(desktopPerf)} **${desktopPerf}** | >= 95 |
-            | **Accessibility** | ${getScoreEmoji(mobileA11y)} **${mobileA11y}** | ${getScoreEmoji(desktopA11y)} **${desktopA11y}** | >= 95 |
-            | **Best Practices** | ${getScoreEmoji(mobileBp)} **${mobileBp}** | ${getScoreEmoji(desktopBp)} **${desktopBp}** | >= 95 |
-            | **SEO** | ${getScoreEmoji(mobileSeo)} **${mobileSeo}** | ${getScoreEmoji(desktopSeo)} **${desktopSeo}** | >= 95 |
+            | **Performance** | ${getScoreEmoji(mobilePerf)} **${mobilePerf}** | ${getScoreEmoji(desktopPerf)} **${desktopPerf}** | ≥ 95 |
+            | **Accessibility** | ${getScoreEmoji(mobileA11y)} **${mobileA11y}** | ${getScoreEmoji(desktopA11y)} **${desktopA11y}** | ≥ 95 |
+            | **Best Practices** | ${getScoreEmoji(mobileBp)} **${mobileBp}** | ${getScoreEmoji(desktopBp)} **${desktopBp}** | ≥ 95 |
+            | **SEO** | ${getScoreEmoji(mobileSeo)} **${mobileSeo}** | ${getScoreEmoji(desktopSeo)} **${desktopSeo}** | ≥ 95 |
 
             ${reportText}
 
-            *Audit ran against the latest build on preview server.*`;
+            *Full reports are also saved as the \`lighthouse-reports\` workflow artifact.*`;
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
