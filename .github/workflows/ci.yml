@@ -129,6 +129,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -149,44 +150,51 @@ jobs:
             console.log('Lighthouse URLs:', urls);
           "
 
+      - name: Start preview server
+        run: pnpm preview --host &
+      - name: Wait for preview server
+        run: npx --yes wait-on tcp:localhost:4173 --timeout 30000
+
       - name: Run Lighthouse on Mobile
         id: lighthouse_mobile
-        continue-on-error: true
         uses: treosh/lighthouse-ci-action@v12
         with:
           urlsFile: './.github/lighthouse-urls.txt'
-          startServerCommand: pnpm preview
-          uploadArtifacts: true
-          temporaryPublicStorage: true
+          configPath: './.github/lhci-mobile.json'
 
-      - name: Save Mobile Manifest
-        if: steps.lighthouse_mobile.outcome == 'success'
+      - name: Save Mobile Reports
+        if: always()
         run: cp -r .lighthouseci .lighthouseci-mobile
 
       - name: Run Lighthouse on Desktop
         id: lighthouse_desktop
-        continue-on-error: true
         uses: treosh/lighthouse-ci-action@v12
         with:
           urlsFile: './.github/lighthouse-urls.txt'
-          startServerCommand: pnpm preview
-          uploadArtifacts: true
-          temporaryPublicStorage: true
           configPath: './.github/lhci-desktop.json'
 
-      - name: Save Desktop Manifest
-        if: steps.lighthouse_desktop.outcome == 'success'
+      - name: Save Desktop Reports
+        if: always()
         run: cp -r .lighthouseci .lighthouseci-desktop
 
+      - name: Upload Lighthouse Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-reports
+          path: |
+            .lighthouseci-mobile/
+            .lighthouseci-desktop/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Post Comment on PR
+        continue-on-error: true
         uses: actions/github-script@v7
         if: >-
           github.event_name == 'pull_request' &&
-          steps.lighthouse_mobile.outcome == 'success' &&
-          steps.lighthouse_desktop.outcome == 'success'
-        env:
-          MOBILE_LINKS: ${{ steps.lighthouse_mobile.outputs.links }}
-          DESKTOP_LINKS: ${{ steps.lighthouse_desktop.outputs.links }}
+          (steps.lighthouse_mobile.outcome == 'success' || steps.lighthouse_mobile.outcome == 'failure') &&
+          (steps.lighthouse_desktop.outcome == 'success' || steps.lighthouse_desktop.outcome == 'failure')
         with:
           script: |
             const fs = require('fs');
@@ -196,15 +204,20 @@ jobs:
             const snap = JSON.parse(fs.readFileSync('scripts/routes-snapshot.json', 'utf8'));
             const base = 'http://localhost:4173';
 
+            // Thresholds must stay in sync with lhci-mobile.json / lhci-desktop.json.
+            // Performance is not gated in CI due to GitHub-hosted runner variance.
+            const BUDGET = 95;
             const formatScore = (val) => Math.round(val * 100);
+            const getPerfEmoji = (score) => {
+              if (score >= 90) return '🟢';
+              if (score >= 70) return '🟡';
+              return '🔴';
+            };
             const getScoreEmoji = (score) => {
-              if (score >= 95) return '🟢';
+              if (score >= BUDGET) return '🟢';
               if (score >= 90) return '🟡';
               return '🔴';
             };
-
-            const mobileLinks = JSON.parse(process.env.MOBILE_LINKS || '{}');
-            const desktopLinks = JSON.parse(process.env.DESKTOP_LINKS || '{}');
 
             // Build one row per audited route
             const rows = snap.lighthouseRoutes.map(r => {
@@ -214,30 +227,34 @@ jobs:
               if (!mob || !desk) return null;
               const mp = formatScore(mob.summary.performance);
               const ma = formatScore(mob.summary.accessibility);
+              const mb = formatScore(mob.summary['best-practices']);
+              const ms = formatScore(mob.summary.seo);
               const dp = formatScore(desk.summary.performance);
               const da = formatScore(desk.summary.accessibility);
-              return `| \`${r.path}\` | ${getScoreEmoji(mp)} **${mp}** / ${getScoreEmoji(ma)} **${ma}** | ${getScoreEmoji(dp)} **${dp}** / ${getScoreEmoji(da)} **${da}** |`;
+              const db = formatScore(desk.summary['best-practices']);
+              const ds = formatScore(desk.summary.seo);
+              return `| \`${r.path}\` | ${getPerfEmoji(mp)} **${mp}** / ${getScoreEmoji(ma)} **${ma}** / ${getScoreEmoji(mb)} **${mb}** / ${getScoreEmoji(ms)} **${ms}** | ${getPerfEmoji(dp)} **${dp}** / ${getScoreEmoji(da)} **${da}** / ${getScoreEmoji(db)} **${db}** / ${getScoreEmoji(ds)} **${ds}** |`;
             }).filter(Boolean).join('\n');
 
-            const reportLinks = [];
-            for (const r of snap.lighthouseRoutes) {
-              const url = base + r.path;
-              if (mobileLinks[url]) reportLinks.push(`[Mobile ${r.path}](${mobileLinks[url]})`);
-              if (desktopLinks[url]) reportLinks.push(`[Desktop ${r.path}](${desktopLinks[url]})`);
-            }
-            const reportText = reportLinks.length > 0
-              ? `📄 **Reports:** ${reportLinks.join(' | ')}`
-              : '';
+            const allA11yBpSeo = [...mobileManifest, ...desktopManifest].every(m =>
+              formatScore(m.summary.accessibility) >= BUDGET &&
+              formatScore(m.summary['best-practices']) >= BUDGET &&
+              formatScore(m.summary.seo) >= BUDGET
+            );
+
+            const statusLine = allA11yBpSeo
+              ? '✅ Accessibility, Best Practices, and SEO meet the ≥ 95 budget across all audited routes.'
+              : '❌ One or more gated categories are below 95 — this job will block merge.';
 
             const body = `### ⚡ Lighthouse Audit Results
 
-            | Route | Mobile Perf / A11y | Desktop Perf / A11y |
+            ${statusLine}
+
+            | Route | Mobile Perf / A11y / BP / SEO | Desktop Perf / A11y / BP / SEO |
             | --- | --- | --- |
             ${rows}
 
-            ${reportText}
-
-            *Audit ran against the latest build on preview server.*`;
+            > Performance is not gated in CI — GitHub-hosted runner scores vary ±20 pts. Full reports are saved as the \`lighthouse-reports\` artifact for manual review.`;
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
