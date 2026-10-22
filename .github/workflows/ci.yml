@@ -150,8 +150,6 @@ jobs:
         with:
           urls: |
             http://localhost:4173/
-          uploadArtifacts: true
-          temporaryPublicStorage: true
           configPath: './.github/lhci-mobile.json'
 
       - name: Save Mobile Reports
@@ -164,8 +162,6 @@ jobs:
         with:
           urls: |
             http://localhost:4173/
-          uploadArtifacts: true
-          temporaryPublicStorage: true
           configPath: './.github/lhci-desktop.json'
 
       - name: Save Desktop Reports
@@ -189,9 +185,6 @@ jobs:
           github.event_name == 'pull_request' &&
           (steps.lighthouse_mobile.outcome == 'success' || steps.lighthouse_mobile.outcome == 'failure') &&
           (steps.lighthouse_desktop.outcome == 'success' || steps.lighthouse_desktop.outcome == 'failure')
-        env:
-          MOBILE_LINKS: ${{ steps.lighthouse_mobile.outputs.links }}
-          DESKTOP_LINKS: ${{ steps.lighthouse_desktop.outputs.links }}
         with:
           script: |
             const fs = require('fs');
@@ -233,16 +226,6 @@ jobs:
               return '🔴';
             };
 
-            const mobileLinks = JSON.parse(process.env.MOBILE_LINKS || '{}');
-            const desktopLinks = JSON.parse(process.env.DESKTOP_LINKS || '{}');
-            const mobileReport = mobileLinks['http://localhost:4173/'] || '';
-            const desktopReport = desktopLinks['http://localhost:4173/'] || '';
-
-            const reportLinks = [];
-            if (mobileReport) reportLinks.push(`[Mobile Report](${mobileReport})`);
-            if (desktopReport) reportLinks.push(`[Desktop Report](${desktopReport})`);
-            const reportText = reportLinks.length > 0 ? `📄 **Reports:** ${reportLinks.join(' | ')}` : '';
-
             const statusLine = allPass
               ? '✅ Accessibility, Best Practices, and SEO meet the ≥ 95 budget.'
               : '❌ One or more gated categories are below 95 — this job will block merge.';
@@ -257,8 +240,6 @@ jobs:
             | **Accessibility** | ${getScoreEmoji(mobileA11y)} **${mobileA11y}** | ${getScoreEmoji(desktopA11y)} **${desktopA11y}** | ≥ 95 |
             | **Best Practices** | ${getScoreEmoji(mobileBp)} **${mobileBp}** | ${getScoreEmoji(desktopBp)} **${desktopBp}** | ≥ 95 |
             | **SEO** | ${getScoreEmoji(mobileSeo)} **${mobileSeo}** | ${getScoreEmoji(desktopSeo)} **${desktopSeo}** | ≥ 95 |
-
-            ${reportText}
 
             > Performance is not gated in CI — GitHub-hosted runner scores vary ±20 pts. Full reports are saved as the \`lighthouse-reports\` artifact for manual review.`;
 
