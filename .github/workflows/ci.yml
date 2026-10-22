@@ -129,6 +129,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -180,6 +181,7 @@ jobs:
           retention-days: 14
 
       - name: Post Comment on PR
+        continue-on-error: true
         uses: actions/github-script@v7
         if: >-
           github.event_name == 'pull_request' &&
