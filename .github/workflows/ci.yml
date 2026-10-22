@@ -140,16 +140,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
-      - name: Generate Lighthouse URL list from route inventory
-        run: |
-          node -e "
-            const snap = JSON.parse(require('fs').readFileSync('scripts/routes-snapshot.json','utf8'));
-            const base = 'http://localhost:4173';
-            const urls = snap.lighthouseRoutes.map(r => base + r.path).join('\n');
-            require('fs').writeFileSync('.github/lighthouse-urls.txt', urls + '\n');
-            console.log('Lighthouse URLs:', urls);
-          "
-
       - name: Start preview server
         run: pnpm preview --host &
       - name: Wait for preview server
@@ -159,7 +149,6 @@ jobs:
         id: lighthouse_mobile
         uses: treosh/lighthouse-ci-action@v12
         with:
-          urlsFile: './.github/lighthouse-urls.txt'
           configPath: './.github/lhci-mobile.json'
 
       - name: Save Mobile Reports
@@ -170,7 +159,6 @@ jobs:
         id: lighthouse_desktop
         uses: treosh/lighthouse-ci-action@v12
         with:
-          urlsFile: './.github/lighthouse-urls.txt'
           configPath: './.github/lhci-desktop.json'
 
       - name: Save Desktop Reports
