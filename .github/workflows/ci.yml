@@ -156,6 +156,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -166,46 +167,53 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
+      - name: Start preview server
+        run: pnpm preview --host &
+      - name: Wait for preview server
+        run: npx --yes wait-on tcp:localhost:4173 --timeout 30000
+
       - name: Run Lighthouse on Mobile
         id: lighthouse_mobile
-        continue-on-error: true
         uses: treosh/lighthouse-ci-action@v12
         with:
           urls: |
             http://localhost:4173/
-          startServerCommand: pnpm preview
-          uploadArtifacts: true
-          temporaryPublicStorage: true
+          configPath: './.github/lhci-mobile.json'
 
-      - name: Save Mobile Manifest
-        if: steps.lighthouse_mobile.outcome == 'success'
+      - name: Save Mobile Reports
+        if: always()
         run: cp -r .lighthouseci .lighthouseci-mobile
 
       - name: Run Lighthouse on Desktop
         id: lighthouse_desktop
-        continue-on-error: true
         uses: treosh/lighthouse-ci-action@v12
         with:
           urls: |
             http://localhost:4173/
-          startServerCommand: pnpm preview
-          uploadArtifacts: true
-          temporaryPublicStorage: true
           configPath: './.github/lhci-desktop.json'
 
-      - name: Save Desktop Manifest
-        if: steps.lighthouse_desktop.outcome == 'success'
+      - name: Save Desktop Reports
+        if: always()
         run: cp -r .lighthouseci .lighthouseci-desktop
 
+      - name: Upload Lighthouse Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-reports
+          path: |
+            .lighthouseci-mobile/
+            .lighthouseci-desktop/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Post Comment on PR
+        continue-on-error: true
         uses: actions/github-script@v7
         if: >-
           github.event_name == 'pull_request' &&
-          steps.lighthouse_mobile.outcome == 'success' &&
-          steps.lighthouse_desktop.outcome == 'success'
-        env:
-          MOBILE_LINKS: ${{ steps.lighthouse_mobile.outputs.links }}
-          DESKTOP_LINKS: ${{ steps.lighthouse_desktop.outputs.links }}
+          (steps.lighthouse_mobile.outcome == 'success' || steps.lighthouse_mobile.outcome == 'failure') &&
+          (steps.lighthouse_desktop.outcome == 'success' || steps.lighthouse_desktop.outcome == 'failure')
         with:
           script: |
             const fs = require('fs');
@@ -215,6 +223,11 @@ jobs:
             const mobile = mobileManifest[0];
             const desktop = desktopManifest[0];
 
+            // Thresholds must stay in sync with lhci-mobile.json / lhci-desktop.json.
+            // Performance is not gated in CI — GitHub-hosted runner scores vary too
+            // widely (±20 pts) to set a reliable threshold. It is reported here for
+            // visibility; regressions are caught by the uploaded report artifact.
+            const BUDGET = 95;
             const formatScore = (val) => Math.round(val * 100);
 
             const mobilePerf = formatScore(mobile.summary.performance);
@@ -227,34 +240,37 @@ jobs:
             const desktopBp = formatScore(desktop.summary['best-practices']);
             const desktopSeo = formatScore(desktop.summary.seo);
 
+            const allPass =
+              [mobileA11y, mobileBp, mobileSeo, desktopA11y, desktopBp, desktopSeo]
+                .every(s => s >= BUDGET);
+
+            const getPerfEmoji = (score) => {
+              if (score >= 90) return '🟢';
+              if (score >= 70) return '🟡';
+              return '🔴';
+            };
             const getScoreEmoji = (score) => {
-              if (score >= 95) return '🟢';
+              if (score >= BUDGET) return '🟢';
               if (score >= 90) return '🟡';
               return '🔴';
             };
 
-            const mobileLinks = JSON.parse(process.env.MOBILE_LINKS || '{}');
-            const desktopLinks = JSON.parse(process.env.DESKTOP_LINKS || '{}');
-            const mobileReport = mobileLinks['http://localhost:4173/'] || '';
-            const desktopReport = desktopLinks['http://localhost:4173/'] || '';
-
-            const reportLinks = [];
-            if (mobileReport) reportLinks.push(`[Mobile Report](${mobileReport})`);
-            if (desktopReport) reportLinks.push(`[Desktop Report](${desktopReport})`);
-            const reportText = reportLinks.length > 0 ? `📄 **Reports:** ${reportLinks.join(' | ')}` : '';
+            const statusLine = allPass
+              ? '✅ Accessibility, Best Practices, and SEO meet the ≥ 95 budget.'
+              : '❌ One or more gated categories are below 95 — this job will block merge.';
 
             const body = `### ⚡ Lighthouse Audit Results
 
-            | Category | Mobile | Desktop | Target |
+            ${statusLine}
+
+            | Category | Mobile | Desktop | CI Budget |
             | --- | --- | --- | --- |
-            | **Performance** | ${getScoreEmoji(mobilePerf)} **${mobilePerf}** | ${getScoreEmoji(desktopPerf)} **${desktopPerf}** | >= 95 |
-            | **Accessibility** | ${getScoreEmoji(mobileA11y)} **${mobileA11y}** | ${getScoreEmoji(desktopA11y)} **${desktopA11y}** | >= 95 |
-            | **Best Practices** | ${getScoreEmoji(mobileBp)} **${mobileBp}** | ${getScoreEmoji(desktopBp)} **${desktopBp}** | >= 95 |
-            | **SEO** | ${getScoreEmoji(mobileSeo)} **${mobileSeo}** | ${getScoreEmoji(desktopSeo)} **${desktopSeo}** | >= 95 |
+            | **Performance** | ${getPerfEmoji(mobilePerf)} **${mobilePerf}** | ${getPerfEmoji(desktopPerf)} **${desktopPerf}** | _(informational)_ |
+            | **Accessibility** | ${getScoreEmoji(mobileA11y)} **${mobileA11y}** | ${getScoreEmoji(desktopA11y)} **${desktopA11y}** | ≥ 95 |
+            | **Best Practices** | ${getScoreEmoji(mobileBp)} **${mobileBp}** | ${getScoreEmoji(desktopBp)} **${desktopBp}** | ≥ 95 |
+            | **SEO** | ${getScoreEmoji(mobileSeo)} **${mobileSeo}** | ${getScoreEmoji(desktopSeo)} **${desktopSeo}** | ≥ 95 |
 
-            ${reportText}
-
-            *Audit ran against the latest build on preview server.*`;
+            > Performance is not gated in CI — GitHub-hosted runner scores vary ±20 pts. Full reports are saved as the \`lighthouse-reports\` artifact for manual review.`;
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,
