@@ -49,6 +49,33 @@ jobs:
             exit 1
           fi
 
+      - name: Ensure handoff artifacts are not tracked
+        run: |
+          patterns=(
+            'HANDOFF.md'
+            'HANDOFF_*.md'
+            'handoff.md'
+            'handoff_*.md'
+            'PR_INFO.md'
+            'PR_DESCRIPTION.md'
+            'PR_BODY.md'
+            'pr-info.md'
+            'pr_info.md'
+            'pr-description.md'
+            'pr_description.md'
+            'pr-body.md'
+            'pr_body.md'
+          )
+          found=0
+          for p in "${patterns[@]}"; do
+            matches=$(git ls-files "$p" 2>/dev/null)
+            if [ -n "$matches" ]; then
+              echo "::error::Handoff artifact must not be committed: $matches"
+              found=1
+            fi
+          done
+          if [ "$found" -eq 1 ]; then exit 1; fi
+
   serverless-smoke:
     name: Serverless Smoke
     if: github.event_name == 'pull_request'
@@ -149,6 +176,8 @@ jobs:
         id: lighthouse_mobile
         uses: treosh/lighthouse-ci-action@v12
         with:
+          urls: |
+            http://localhost:4173/
           configPath: './.github/lhci-mobile.json'
 
       - name: Save Mobile Reports
@@ -159,6 +188,8 @@ jobs:
         id: lighthouse_desktop
         uses: treosh/lighthouse-ci-action@v12
         with:
+          urls: |
+            http://localhost:4173/
           configPath: './.github/lhci-desktop.json'
 
       - name: Save Desktop Reports
@@ -193,9 +224,26 @@ jobs:
             const base = 'http://localhost:4173';
 
             // Thresholds must stay in sync with lhci-mobile.json / lhci-desktop.json.
-            // Performance is not gated in CI due to GitHub-hosted runner variance.
+            // Performance is not gated in CI — GitHub-hosted runner scores vary too
+            // widely (±20 pts) to set a reliable threshold. It is reported here for
+            // visibility; regressions are caught by the uploaded report artifact.
             const BUDGET = 95;
             const formatScore = (val) => Math.round(val * 100);
+
+            const mobilePerf = formatScore(mobile.summary.performance);
+            const mobileA11y = formatScore(mobile.summary.accessibility);
+            const mobileBp = formatScore(mobile.summary['best-practices']);
+            const mobileSeo = formatScore(mobile.summary.seo);
+
+            const desktopPerf = formatScore(desktop.summary.performance);
+            const desktopA11y = formatScore(desktop.summary.accessibility);
+            const desktopBp = formatScore(desktop.summary['best-practices']);
+            const desktopSeo = formatScore(desktop.summary.seo);
+
+            const allPass =
+              [mobileA11y, mobileBp, mobileSeo, desktopA11y, desktopBp, desktopSeo]
+                .every(s => s >= BUDGET);
+
             const getPerfEmoji = (score) => {
               if (score >= 90) return '🟢';
               if (score >= 70) return '🟡';
@@ -207,40 +255,20 @@ jobs:
               return '🔴';
             };
 
-            // Build one row per audited route
-            const rows = snap.lighthouseRoutes.map(r => {
-              const url = base + r.path;
-              const mob = mobileManifest.find(m => m.url === url);
-              const desk = desktopManifest.find(d => d.url === url);
-              if (!mob || !desk) return null;
-              const mp = formatScore(mob.summary.performance);
-              const ma = formatScore(mob.summary.accessibility);
-              const mb = formatScore(mob.summary['best-practices']);
-              const ms = formatScore(mob.summary.seo);
-              const dp = formatScore(desk.summary.performance);
-              const da = formatScore(desk.summary.accessibility);
-              const db = formatScore(desk.summary['best-practices']);
-              const ds = formatScore(desk.summary.seo);
-              return `| \`${r.path}\` | ${getPerfEmoji(mp)} **${mp}** / ${getScoreEmoji(ma)} **${ma}** / ${getScoreEmoji(mb)} **${mb}** / ${getScoreEmoji(ms)} **${ms}** | ${getPerfEmoji(dp)} **${dp}** / ${getScoreEmoji(da)} **${da}** / ${getScoreEmoji(db)} **${db}** / ${getScoreEmoji(ds)} **${ds}** |`;
-            }).filter(Boolean).join('\n');
-
-            const allA11yBpSeo = [...mobileManifest, ...desktopManifest].every(m =>
-              formatScore(m.summary.accessibility) >= BUDGET &&
-              formatScore(m.summary['best-practices']) >= BUDGET &&
-              formatScore(m.summary.seo) >= BUDGET
-            );
-
-            const statusLine = allA11yBpSeo
-              ? '✅ Accessibility, Best Practices, and SEO meet the ≥ 95 budget across all audited routes.'
+            const statusLine = allPass
+              ? '✅ Accessibility, Best Practices, and SEO meet the ≥ 95 budget.'
               : '❌ One or more gated categories are below 95 — this job will block merge.';
 
             const body = `### ⚡ Lighthouse Audit Results
 
             ${statusLine}
 
-            | Route | Mobile Perf / A11y / BP / SEO | Desktop Perf / A11y / BP / SEO |
-            | --- | --- | --- |
-            ${rows}
+            | Category | Mobile | Desktop | CI Budget |
+            | --- | --- | --- | --- |
+            | **Performance** | ${getPerfEmoji(mobilePerf)} **${mobilePerf}** | ${getPerfEmoji(desktopPerf)} **${desktopPerf}** | _(informational)_ |
+            | **Accessibility** | ${getScoreEmoji(mobileA11y)} **${mobileA11y}** | ${getScoreEmoji(desktopA11y)} **${desktopA11y}** | ≥ 95 |
+            | **Best Practices** | ${getScoreEmoji(mobileBp)} **${mobileBp}** | ${getScoreEmoji(desktopBp)} **${desktopBp}** | ≥ 95 |
+            | **SEO** | ${getScoreEmoji(mobileSeo)} **${mobileSeo}** | ${getScoreEmoji(desktopSeo)} **${desktopSeo}** | ≥ 95 |
 
             > Performance is not gated in CI — GitHub-hosted runner scores vary ±20 pts. Full reports are saved as the \`lighthouse-reports\` artifact for manual review.`;
 
